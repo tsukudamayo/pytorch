@@ -136,16 +136,17 @@ namespace {
   }
 }
 
-// TODO: add overloads that take FunctionSchema directly
-Module&& Module::def(const char* schema_str) && {
-  auto schema = torch::jit::parseSchema(addNamespace(ns_, schema_str));
-  schema.setAliasAnalysis(c10::AliasAnalysisKind::FROM_SCHEMA); // TODO: clean this up
+Module& Module::def(FunctionSchema&& schema) & {
+  schema.setNamespaceIfNotSet(ns_);
   registrars_.emplace_back(Dispatcher::singleton().registerDef(std::move(schema)));
+  return *this;
+}
+Module&& Module::def(FunctionSchema&& schema) && {
+  def(std::move(schema));
   return std::move(*this);
 }
 
-Module&& Module::def(const char* name_or_schema_str, CppFunction&& f) && {
-  auto name_or_schema = torch::jit::parseSchemaOrName(addNamespace(ns_, name_or_schema_str));
+Module& Module::def(c10::either<OperatorName, FunctionSchema>&& name_or_schema, CppFunction&& f) & {
   FunctionSchema schema = [&] {
     if (name_or_schema.is_right()) {
       return std::move(name_or_schema).right();
@@ -154,27 +155,41 @@ Module&& Module::def(const char* name_or_schema_str, CppFunction&& f) && {
       TORCH_CHECK(f.schema_, "Module::def(): schema was not specified, and we "
           "couldn't infer schema either.  Please explicitly provide schema.");
       OperatorName name = std::move(name_or_schema).left();
-      return f.schema_->cloneWithName(std::move(name.name), std::move(name.overload_name));
+      FunctionSchema s = f.schema_->cloneWithName(std::move(name.name), std::move(name.overload_name));
+      s.setAliasAnalysis(c10::AliasAnalysisKind::CONSERVATIVE);
+      return s;
     }
   }();
+  schema.setNamespaceIfNotSet(ns_);
   // Retain the OperatorName for Impl call
   OperatorName name = schema.operator_name();
-  schema.setAliasAnalysis(c10::AliasAnalysisKind::FROM_SCHEMA); // TODO: clean this up
   registrars_.emplace_back(Dispatcher::singleton().registerDef(std::move(schema)));
   registrars_.emplace_back(Dispatcher::singleton().registerImpl(name, f.dispatch_key_, std::move(f.func_), std::move(f.schema_)));
+  return *this;
+}
+Module&& Module::def(c10::either<OperatorName, FunctionSchema>&& name_or_schema, CppFunction&& f) && {
+  def(std::move(name_or_schema), std::move(f));
   return std::move(*this);
 }
 
-Module&& Module::impl(const char* name_str, CppFunction&& f) && {
+Module& Module::impl(const char* name_str, CppFunction&& f) & {
   auto name = torch::jit::parseName(addNamespace(ns_, name_str));
   registrars_.emplace_back(Dispatcher::singleton().registerImpl(name, f.dispatch_key_, std::move(f.func_), std::move(f.schema_)));
+  return *this;
+}
+Module&& Module::impl(const char* name_str, CppFunction&& f) && {
+  impl(name_str, std::move(f));
   return std::move(*this);
 }
 
-Module&& Module::fallback(CppFunction&& f) && {
+Module& Module::fallback(CppFunction&& f) & {
   TORCH_CHECK(!ns_, "Cannot define fallbacks from namespaces, use c10::import().fallback() instead");
   TORCH_CHECK(f.dispatch_key_, "Fallback for catch all function not supported");
   registrars_.emplace_back(Dispatcher::singleton().registerFallback(*f.dispatch_key_, std::move(f.func_)));
+  return *this;
+}
+Module&& Module::fallback(CppFunction&& f) && {
+  fallback(std::move(f));
   return std::move(*this);
 }
 
