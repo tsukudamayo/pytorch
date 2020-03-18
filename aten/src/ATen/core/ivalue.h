@@ -545,6 +545,10 @@ struct CAFFE2_API IValue final {
   // Inserts all subvalues of this in subValues.
   void getSubValues(HashAliasedIValues& subValues) const;
 
+  IValue deepcopy() const;
+  IValue deepcopy(
+      std::unordered_map<IValue, IValue>& memo) const;
+
  private:
   // NOTE: IValue tags are intentionally private. In the future we may encode
   // this value different (e.g. using NaN boxing), and this would make it more

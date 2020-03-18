@@ -327,6 +327,67 @@ std::shared_ptr<ClassType> ivalue::Object::type() const {
   return type_.type_->expect<ClassType>();
 }
 
+IValue IValue::deepcopy() const {
+  std::unordered_map<IValue, IValue> memo;
+  return deepcopy(memo);
+}
+
+IValue IValue::deepcopy(
+    std::unordered_map<IValue, IValue>& memo) const {
+  if (memo.count(*this)) {
+    return memo.at(*this);
+  }
+  IValue copy;
+  switch(tag) {
+    case IValue::Tag::Tensor:
+      copy = IValue(toTensor().clone());
+      break;
+    case IValue::Tag::Tuple: {
+      std::vector<IValue> copied_tuple;
+      for (const auto& e : toTuple()->elements()) {
+        copied_tuple.push_back(e.deepcopy(memo));
+      }
+      copy = IValue(ivalue::Tuple::create(copied_tuple));
+    }
+      break;
+    case IValue::Tag::GenericList: {
+      c10::List<IValue> copied_list;
+      for (IValue v : toList()) {
+        copied_list.push_back(v.deepcopy(memo));
+      }
+      copy = IValue(copied_list);
+    }
+      break;
+    case IValue::Tag::GenericDict: {
+      c10::Dict<IValue, IValue> copied_dict;
+      for (const auto& entry : toGenericDict()) {
+        copied_dict.insert(entry.key().deepcopy(memo), entry.value().deepcopy(memo));
+      }
+      copy = IValue(copied_dict);
+    }
+      break;
+    case IValue::Tag::Object: {
+      copy = IValue(toObject()->deepcopy(memo));
+      break;
+    case IValue::Tag::String:
+    case IValue::Tag::None:
+    case IValue::Tag::Double:
+    case IValue::Tag::Int:
+    case IValue::Tag::Bool:
+    case IValue::Tag::Device:
+    case IValue::Tag::Uninitialized:
+      copy = *this;
+      break;
+    default:
+      AT_ERROR("Can't deepcopy IValue with tag: ", tagKind());
+    }
+  }
+  if (!isSameIdentity(copy)) {
+    memo[*this] = copy;
+  }
+  return copy;
+}
+
 std::string ivalue::Object::name() const {
   return type()->name()->qualifiedName();
 }
@@ -349,6 +410,19 @@ void ivalue::Object::unsafeRemoveAttr(const std::string& name) {
 void ivalue::Object::resizeObject(size_t slot) {
   AT_ASSERT(slot < type()->numAttributes());
   slots_.resize(type()->numAttributes());
+}
+
+c10::intrusive_ptr<ivalue::Object> ivalue::Object::deepcopy() const {
+  std::unordered_map<IValue, IValue> memo;
+  return deepcopy(memo);
+}
+
+c10::intrusive_ptr<ivalue::Object> ivalue::Object::deepcopy(std::unordered_map<IValue, IValue>& memo) const {
+  auto object = ivalue::Object::create(c10::StrongTypePtr(compilation_unit(), type()), type()->numAttributes());
+  for (auto i = 0; i < slots_.size(); ++i) {
+    object->setSlot(i, slots_[i].deepcopy(memo));
+  }
+  return object;
 }
 
 
